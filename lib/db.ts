@@ -394,9 +394,18 @@ export const dbService = {
 
   // --- LEADERBOARD ---
   async getLeaderboard(): Promise<LeaderboardEntry[]> {
+    // Common sort logic helper: High score first, then lowest timeTaken
+    const sortLogic = (a: LeaderboardEntry, b: LeaderboardEntry) => {
+      if (b.score !== a.score) return b.score - a.score;
+      const timeA = a.timeTaken !== undefined ? a.timeTaken : 999999;
+      const timeB = b.timeTaken !== undefined ? b.timeTaken : 999999;
+      return timeA - timeB;
+    };
+
     if (useFirebase && db) {
       try {
         const lbRef = collection(db, "leaderboard");
+        // Fetch top scores. We do final composite sorting client-side to avoid complex index requirement errors.
         const q = query(lbRef, orderBy("score", "desc"), limit(100));
         const snapshot = await withTimeout(getDocs(q), 10000);
         const list: LeaderboardEntry[] = [];
@@ -409,10 +418,10 @@ export const dbService = {
           for (const entry of DEFAULT_LEADERBOARD) {
             await addDoc(collection(db, "leaderboard"), entry);
           }
-          return DEFAULT_LEADERBOARD.sort((a, b) => b.score - a.score);
+          return [...DEFAULT_LEADERBOARD].sort(sortLogic);
         }
 
-        return list;
+        return list.sort(sortLogic);
       } catch (err) {
         console.warn("Firestore getLeaderboard failed or timed out. Tripping circuit breaker & falling back to local storage:", err);
         useFirebase = false; // trip circuit breaker
@@ -420,7 +429,7 @@ export const dbService = {
     }
 
     // Local storage fallback
-    return getLocalLeaderboard().sort((a, b) => b.score - a.score);
+    return getLocalLeaderboard().sort(sortLogic);
   },
 
   async addToLeaderboard(entry: Omit<LeaderboardEntry, "id">): Promise<LeaderboardEntry> {
