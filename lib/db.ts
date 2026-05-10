@@ -406,7 +406,7 @@ export const dbService = {
       try {
         const lbRef = collection(db, "leaderboard");
         // Fetch top scores. We do final composite sorting client-side to avoid complex index requirement errors.
-        const q = query(lbRef, orderBy("score", "desc"), limit(100));
+        const q = query(lbRef, orderBy("score", "desc"));
         const snapshot = await withTimeout(getDocs(q), 10000);
         const list: LeaderboardEntry[] = [];
         snapshot.forEach((doc) => {

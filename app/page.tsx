@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { dbService, Question, LeaderboardEntry } from "@/lib/db";
-import { Trophy, AlertCircle, ChevronRight, CheckCircle2, Shield, Loader2, RefreshCw, Lock, Zap, Flame, Flag, UserCircle, Camera, Download, Heart } from "lucide-react";
+import { Trophy, AlertCircle, ChevronRight, ChevronLeft, CheckCircle2, Shield, Loader2, RefreshCw, Lock, Zap, Flame, Flag, UserCircle, Camera, Download, Heart } from "lucide-react";
 import { toPng } from "html-to-image";
 
 export default function PaddockPulse() {
@@ -15,6 +15,10 @@ export default function PaddockPulse() {
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [isFirebase, setIsFirebase] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const itemsPerPage = 10;
 
   // Quiz Engine State
   const [selectedLevel, setSelectedLevel] = useState<"basic" | "intermediate" | "advanced">("basic");
@@ -134,6 +138,9 @@ export default function PaddockPulse() {
   const navigateTo = (view: string) => {
     setCurrentView(view);
     // Reset temporary states depending on navigation
+    if (view === "leaderboard") {
+      setCurrentPage(1);
+    }
     if (view === "landing") {
       setQuizQuestions([]);
       setCurrentQuestionIndex(0);
@@ -458,6 +465,9 @@ export default function PaddockPulse() {
       alert("Export failed. Please try again.");
     } finally { setIsExportingImage(false); }
   };
+
+  const totalPages = Math.max(1, Math.ceil(leaderboard.length / itemsPerPage));
+  const paginatedLeaderboard = leaderboard.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   return (
     <div className="flex flex-col flex-1 min-h-screen overflow-x-hidden paddock-background">
@@ -1264,20 +1274,21 @@ export default function PaddockPulse() {
                   <tbody>
                     {leaderboard.length === 0 ? (
                       <tr>
-                        <td colSpan={4} className="p-12 text-center text-slate-500 font-bold uppercase tracking-widest">
+                        <td colSpan={5} className="p-12 text-center text-slate-500 font-bold uppercase tracking-widest">
                           No telemetry data recorded yet.
                         </td>
                       </tr>
                     ) : (
-                      leaderboard.map((entry, index) => {
+                      paginatedLeaderboard.map((entry, index) => {
+                        const globalIndex = ((currentPage - 1) * itemsPerPage) + index;
                         let rowStyle = "border-b border-slate-100 hover:bg-slate-50 transition-colors";
-                        let posContent = <span className="text-slate-500 font-black text-lg">{(index + 1).toString().padStart(2, '0')}</span>;
+                        let posContent = <span className="text-slate-500 font-black text-lg">{(globalIndex + 1).toString().padStart(2, '0')}</span>;
                         
-                        if (index === 0) {
+                        if (globalIndex === 0) {
                           posContent = <div className="w-8 h-8 rounded-full bg-yellow-400/20 border border-yellow-400 flex items-center justify-center text-yellow-400 font-black shadow-[0_0_10px_rgba(250,204,21,0.3)]">1</div>;
-                        } else if (index === 1) {
+                        } else if (globalIndex === 1) {
                           posContent = <div className="w-8 h-8 rounded-full bg-slate-300/20 border border-slate-300 flex items-center justify-center text-slate-700 font-black">2</div>;
-                        } else if (index === 2) {
+                        } else if (globalIndex === 2) {
                           posContent = <div className="w-8 h-8 rounded-full bg-amber-700/20 border border-amber-700 flex items-center justify-center text-amber-500 font-black">3</div>;
                         }
 
@@ -1285,7 +1296,7 @@ export default function PaddockPulse() {
                           <tr key={entry.id || index} className={rowStyle}>
                             <td className="p-4 pl-6">{posContent}</td>
                             <td className="p-4">
-                              <span className={`font-bold text-lg uppercase ${index === 0 ? 'text-yellow-400' : 'text-slate-900'}`}>{entry.name}</span>
+                              <span className={`font-bold text-lg uppercase ${globalIndex === 0 ? 'text-yellow-400' : 'text-slate-900'}`}>{entry.name}</span>
                             </td>
                             <td className="p-4">
                               <div className="flex items-center gap-2">
@@ -1314,6 +1325,34 @@ export default function PaddockPulse() {
                   </tbody>
                 </table>
               </div>
+
+              {/* Pagination Controls */}
+              {leaderboard.length > 0 && (
+                <div className="bg-slate-50 px-6 py-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
+                    Telemetry Feed: Showing {((currentPage - 1) * itemsPerPage) + 1} - {Math.min(currentPage * itemsPerPage, leaderboard.length)} of {leaderboard.length} Drivers
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button 
+                      onClick={() => { setCurrentPage(p => Math.max(1, p - 1)); }}
+                      disabled={currentPage === 1}
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed transition font-bold text-xs shadow-sm"
+                    >
+                      <ChevronLeft className="w-4 h-4" /> Prev
+                    </button>
+                    <div className="bg-white border border-slate-200 px-3 py-1.5 rounded-lg shadow-inner flex items-center">
+                       <span className="text-xs font-black text-slate-700 uppercase tracking-widest">Page {currentPage} / {totalPages}</span>
+                    </div>
+                    <button 
+                      onClick={() => { setCurrentPage(p => Math.min(totalPages, p + 1)); }}
+                      disabled={currentPage === totalPages}
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed transition font-bold text-xs shadow-sm"
+                    >
+                      Next <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
