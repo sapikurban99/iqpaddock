@@ -153,6 +153,20 @@ export default function PaddockPulse() {
   };
 
   const startStageQuiz = async (level: "basic" | "intermediate" | "advanced", stageNum: number) => {
+    // Force active driver identification before running
+    if (!driverName.trim()) {
+      alert("PERINGATAN: Masukkan Driver Alias kamu terlebih dahulu di kolom bagian atas sebelum memulai balapan!");
+      const el = document.getElementById("global-driver-alias-input");
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.focus();
+        // Temporary visual cue (red border pulse) could be added here via classList
+        el.classList.add('ring-4', 'ring-f1-red/40');
+        setTimeout(() => el.classList.remove('ring-4', 'ring-f1-red/40'), 2000);
+      }
+      return;
+    }
+
     setIsLoading(true);
     setSelectedLevel(level);
     setSelectedStage(stageNum);
@@ -246,35 +260,48 @@ export default function PaddockPulse() {
           });
         }
       }
+
+      // AUTOMATIC SUBMISSION: If we have the driverName (which is now forced at start),
+      // we proactively trigger the background persistence immediately to reduce friction.
+      handleSubmitScore(undefined, true, elapsedSeconds);
+      
       navigateTo("result");
     }
   };
 
-  // Submit Score to Leaderboard
-  const handleSubmitScore = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!driverName.trim()) return;
+  // Submit Score to Leaderboard (Supports programmatic auto-trigger via parameters)
+  const handleSubmitScore = async (e?: React.FormEvent, skipRedirect = false, overrideTimeTaken?: number) => {
+    if (e) e.preventDefault();
+    
+    const nameToUse = driverName.trim();
+    if (!nameToUse) return;
 
     if (typeof window !== "undefined") {
-      localStorage.setItem("paddock_pulse_driver_name", driverName.trim());
+      localStorage.setItem("paddock_pulse_driver_name", nameToUse);
     }
+
+    // Use the parameter directly if passed, fallback to computed state otherwise
+    const finalTime = overrideTimeTaken !== undefined ? overrideTimeTaken : timeTaken;
 
     setIsSubmittingScore(true);
     try {
       await dbService.addToLeaderboard({
-        name: driverName.trim(),
+        name: nameToUse,
         score,
         level: selectedLevel,
         stage: selectedStage,
-        timeTaken: timeTaken,
+        timeTaken: finalTime,
         createdAt: new Date().toISOString()
       });
       await loadAllData();
-      // Smart redirect: Show certificate immediately if level completed, otherwise leaderboard.
-      if (selectedStage === 3 && score >= 50) {
-        navigateTo("certificate");
-      } else {
-        navigateTo("leaderboard");
+      
+      // Only redirect if explicitly requested (like clicking manual submit button)
+      if (!skipRedirect) {
+        if (selectedStage === 3 && score >= 50) {
+          navigateTo("certificate");
+        } else {
+          navigateTo("leaderboard");
+        }
       }
     } catch (err) {
       console.error("Failed to save score:", err);
@@ -687,9 +714,9 @@ export default function PaddockPulse() {
               </h2>
             </div>
 
-            {/* View stored certificate shortcut OR retrieval utility */}
-            {completedLicenses[selectedLevel] ? (
-              <div className="mb-10 max-w-3xl mx-auto w-full bg-gradient-to-r from-amber-500/10 to-amber-500/5 border border-amber-500/30 rounded-2xl p-5 flex flex-col sm:flex-row items-center justify-between backdrop-blur-md animate-fade-in shadow-sm border-t-4 border-t-amber-500">
+            {/* A. View stored certificate shortcut (Level complete) */}
+            {completedLicenses[selectedLevel] && (
+              <div className="mb-5 max-w-3xl mx-auto w-full bg-gradient-to-r from-amber-500/10 to-amber-500/5 border border-amber-500/30 rounded-2xl p-5 flex flex-col sm:flex-row items-center justify-between backdrop-blur-md animate-fade-in shadow-sm border-t-4 border-t-amber-500">
                 <div className="flex items-center gap-4 mb-4 sm:mb-0 text-center sm:text-left flex-col sm:flex-row">
                   <div className="bg-amber-500/20 p-3 rounded-xl shrink-0 border border-amber-500/30">
                     <Trophy className="w-7 h-7 text-amber-500" />
@@ -710,34 +737,58 @@ export default function PaddockPulse() {
                   <ChevronRight className="w-4 h-4" />
                 </button>
               </div>
-            ) : (
-              unlockedStages[selectedLevel] >= 3 && (
-                 <div className="mb-10 max-w-3xl mx-auto w-full bg-white/70 border border-slate-200 rounded-2xl p-5 flex flex-col sm:flex-row items-center justify-between backdrop-blur-md animate-fade-in shadow-sm">
-                    <div className="flex items-center gap-4 mb-4 sm:mb-0">
-                      <div className="bg-slate-100 p-2.5 rounded-full">
-                        <Shield className="w-5 h-5 text-slate-500" />
-                      </div>
-                      <div>
-                         <h4 className="font-black text-slate-900 uppercase text-xs tracking-wider">Mencari Lisensi Lama?</h4>
-                         <p className="text-[10px] text-slate-500 font-medium mt-0.5">Ketik Driver Alias kamu di bawah untuk menarik histori otomatis dari Leaderboard.</p>
-                      </div>
-                    </div>
-                    <div className="flex w-full sm:w-auto gap-2">
-                       <input 
-                          type="text" 
-                          value={driverName}
-                          onChange={(e) => {
-                             const val = e.target.value;
-                             setDriverName(val);
-                             if (typeof window !== "undefined") { localStorage.setItem("paddock_pulse_driver_name", val.trim()); }
-                          }}
-                          placeholder="Ketik Nama Driver..."
-                          className="bg-white border border-slate-200 rounded-lg px-4 py-2 text-sm font-bold flex-grow sm:w-48 focus:ring-2 focus:ring-f1-red/20 outline-none transition-all placeholder-slate-300 text-slate-800"
-                       />
-                    </div>
-                 </div>
-              )
             )}
+
+            {/* B. MANDATORY GLOBAL DRIVER IDENTIFICATION (Blocking Gate) */}
+            <div className={`mb-10 max-w-3xl mx-auto w-full rounded-2xl p-5 flex flex-col sm:flex-row items-center justify-between backdrop-blur-md transition-all duration-500 border shadow-sm relative z-20 overflow-hidden ${
+               !driverName.trim() 
+                 ? 'bg-white border-f1-red/40 shadow-[0_0_20px_rgba(225,6,0,0.1)] animate-pulse-subtle' 
+                 : 'bg-white/80 border-slate-200'
+            }`}>
+               {/* Background status fill */}
+               <div className={`absolute inset-y-0 left-0 w-1.5 transition-colors duration-500 ${!driverName.trim() ? 'bg-f1-red' : 'bg-emerald-500'}`} />
+               
+               <div className="flex items-center gap-4 mb-4 sm:mb-0 pl-2">
+                  <div className={`p-3 rounded-xl transition-all duration-500 border ${
+                    !driverName.trim() 
+                      ? 'bg-f1-red/10 text-f1-red border-f1-red/20 animate-bounce-subtle' 
+                      : 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                  }`}>
+                     {!driverName.trim() ? <AlertCircle className="w-5 h-5" /> : <UserCircle className="w-5 h-5" />}
+                  </div>
+                  <div>
+                     <h4 className="font-black text-slate-900 uppercase text-sm tracking-wider flex items-center gap-2">
+                        {!driverName.trim() ? "Identifikasi Pembalap Diperlukan" : "Driver Aktif"}
+                        {driverName.trim() && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />}
+                     </h4>
+                     <p className="text-[10px] text-slate-500 font-bold mt-0.5 max-w-xs">
+                        {!driverName.trim() 
+                          ? "Masukkan Alias Anda di samping untuk membuka akses tombol start balapan." 
+                          : "Siap membalap! Statistik dan leaderboard otomatis disimpan atas nama ini."}
+                     </p>
+                  </div>
+               </div>
+               
+               <div className="flex w-full sm:w-auto gap-2 relative">
+                  <input 
+                     id="global-driver-alias-input"
+                     type="text" 
+                     value={driverName}
+                     onChange={(e) => {
+                        const val = e.target.value;
+                        setDriverName(val);
+                        if (typeof window !== "undefined") { localStorage.setItem("paddock_pulse_driver_name", val.trim()); }
+                     }}
+                     maxLength={16}
+                     placeholder="Ketik Nama Panggilan..."
+                     className={`border rounded-xl px-4 py-3 text-sm font-black flex-grow sm:w-60 transition-all outline-none shadow-inner ${
+                        !driverName.trim() 
+                          ? 'bg-red-50/30 border-f1-red/40 text-slate-900 placeholder-red-300 focus:ring-4 focus:ring-f1-red/20 focus:border-f1-red' 
+                          : 'bg-white border-slate-200 text-emerald-700 focus:ring-4 focus:ring-emerald-500/10'
+                     }`}
+                  />
+               </div>
+            </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-3xl mx-auto">
               {[1, 2, 3].map((stageNum) => {
@@ -969,27 +1020,47 @@ export default function PaddockPulse() {
                 </div>
               )}
 
-              <form onSubmit={handleSubmitScore} className="relative z-10 text-left border-t border-slate-200 pt-8 mt-4">
-                <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-widest mb-2">Record to Global Standings</label>
-                <div className="flex gap-2">
-                  <input 
-                    type="text" 
-                    value={driverName}
-                    onChange={(e) => setDriverName(e.target.value)}
-                    placeholder="Driver Alias..."
-                    maxLength={16}
-                    required
-                    className="flex-grow bg-white border border-slate-200 rounded-lg px-4 py-3 text-slate-900 font-bold focus:outline-none focus:border-f1-red transition-colors placeholder-slate-600"
-                  />
-                  <button 
-                    type="submit"
-                    disabled={isSubmittingScore || !driverName.trim()}
-                    className="bg-slate-900 text-white hover:bg-slate-800 px-6 rounded-lg font-black uppercase tracking-widest hover:bg-slate-200 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
-                  >
-                    {isSubmittingScore ? <Loader2 className="w-5 h-5 animate-spin" /> : (selectedStage === 3 && score >= 50 ? "CLAIM & SUBMIT" : "SUBMIT")}
-                  </button>
-                </div>
-              </form>
+              <div className="relative z-10 text-center border-t border-slate-200 pt-6 mt-4">
+                {isSubmittingScore ? (
+                  <div className="flex flex-col items-center justify-center gap-3 py-6 animate-pulse">
+                     <div className="w-10 h-10 border-4 border-f1-red border-t-transparent rounded-full animate-spin" />
+                     <p className="text-xs font-black text-slate-600 uppercase tracking-widest">AUTO-SAVING TELEMETRY...</p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-3 w-full animate-fade-in">
+                    <div className="flex items-center justify-center gap-2 text-emerald-600 font-bold text-xs uppercase tracking-wider bg-emerald-50/80 backdrop-blur-sm py-3 rounded-xl border border-emerald-200/60 mb-2 shadow-sm">
+                      <CheckCircle2 className="w-4 h-4" />
+                      Skor Berhasil Disimpan di Leaderboard!
+                    </div>
+                    
+                    {selectedStage === 3 && score >= 50 ? (
+                       <button 
+                         onClick={() => navigateTo("certificate")}
+                         className="bg-gradient-to-r from-slate-900 to-slate-800 text-white px-6 py-4 rounded-xl font-black uppercase tracking-widest transition-all shadow-[0_10px_25px_rgba(15,23,42,0.3)] flex items-center justify-center gap-3 hover:scale-[1.02] active:scale-95 relative overflow-hidden group"
+                       >
+                         <div className="absolute inset-0 bg-gradient-to-r from-amber-500/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                         <Trophy className="w-5 h-5 text-amber-400" />
+                         Buka Lisensi Paddock
+                       </button>
+                    ) : (
+                       <button 
+                         onClick={() => navigateTo("leaderboard")}
+                         className="bg-slate-900 text-white hover:bg-slate-800 px-6 py-4 rounded-xl font-black uppercase tracking-widest transition shadow-[0_4px_15px_rgba(15,23,42,0.3)] flex items-center justify-center gap-2 hover:scale-[1.02] active:scale-95"
+                       >
+                         Cek Ranking Klasemen
+                         <ChevronRight className="w-4 h-4" />
+                       </button>
+                    )}
+
+                    <button 
+                       onClick={() => navigateTo("stage-selection")}
+                       className="text-slate-500 hover:text-f1-red font-bold text-[10px] uppercase tracking-widest py-2 transition mt-1"
+                    >
+                       ← Kembali Pilih Level
+                    </button>
+                  </div>
+                )}
+              </div>
 
             </div>
           </div>
@@ -1305,11 +1376,13 @@ export default function PaddockPulse() {
                   </button>
                 </div>
 
-                <div className="paddock-card rounded-2xl p-6 md:p-8 border border-slate-200">
-                  <h3 className="text-lg font-bold text-slate-900 uppercase tracking-widest mb-6 flex items-center gap-2 border-b border-slate-200 pb-4">
-                    {editModeId ? "Edit Telemetry Profile" : "Inject New Telemetry"}
-                    {editModeId && <span className="text-[10px] bg-amber-500/20 text-amber-500 px-2 py-1 rounded">EDIT MODE</span>}
-                  </h3>
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+                  {/* LEFT COLUMN: Input Controls */}
+                  <div className="lg:col-span-7 paddock-card rounded-2xl p-6 md:p-8 border border-slate-200">
+                    <h3 className="text-lg font-bold text-slate-900 uppercase tracking-widest mb-6 flex items-center gap-2 border-b border-slate-200 pb-4">
+                      {editModeId ? "Edit Telemetry Profile" : "Inject New Telemetry"}
+                      {editModeId && <span className="text-[10px] bg-amber-500/20 text-amber-500 px-2 py-1 rounded">EDIT MODE</span>}
+                    </h3>
 
                   <form onSubmit={handleSaveQuestion} className="space-y-6">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1424,6 +1497,88 @@ export default function PaddockPulse() {
                       )}
                     </div>
                   </form>
+                  </div>
+
+                  {/* RIGHT COLUMN: Live Preview Mockup */}
+                  <div className="lg:col-span-5 lg:sticky lg:top-24 space-y-4 animate-fade-in">
+                    <div className="flex items-center justify-between px-2">
+                       <h3 className="text-xs font-black text-slate-600 uppercase tracking-widest flex items-center gap-2">
+                          <Camera className="w-3.5 h-3.5" />
+                          Live Sector Preview
+                       </h3>
+                       <div className="inline-flex items-center gap-1.5 bg-emerald-500 text-white text-[8px] font-black px-2 py-0.5 rounded-full tracking-widest uppercase animate-pulse">
+                         <div className="w-1 h-1 bg-white rounded-full"></div>
+                         REALTIME
+                       </div>
+                    </div>
+                    
+                    <div className="paddock-card rounded-2xl p-5 border border-slate-200 shadow-lg bg-white relative overflow-hidden border-t-4 border-t-f1-red">
+                      {/* Mock Viewport Decorator */}
+                      <div className="flex gap-1.5 mb-4 border-b border-slate-100 pb-3">
+                         <div className="w-2.5 h-2.5 rounded-full bg-slate-200" />
+                         <div className="w-2.5 h-2.5 rounded-full bg-slate-200" />
+                         <div className="w-2.5 h-2.5 rounded-full bg-slate-200" />
+                      </div>
+
+                      {/* Live Preview Image Container */}
+                      {formImageUrl && formImageUrl.trim() ? (
+                         <div className="w-full aspect-[16/9] bg-slate-100 rounded-xl border border-slate-200 overflow-hidden relative mb-4 group shadow-inner">
+                            <img 
+                               src={formImageUrl} 
+                               alt="Preview" 
+                               className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-all"
+                               onError={(e) => { e.currentTarget.src = "https://placehold.co/600x400/f1f5f9/94a3b8?text=Loading+Image+Wait..."; }}
+                            />
+                            <div className="absolute top-2 right-2 bg-emerald-500/90 text-white text-[8px] font-black px-2 py-1 rounded-md uppercase tracking-widest shadow-sm">Visual Active</div>
+                         </div>
+                      ) : (
+                         <div className="w-full aspect-[16/9] bg-slate-50 rounded-xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400 gap-3 mb-4 shadow-inner">
+                            <Camera className="w-10 h-10 opacity-30" />
+                            <div className="text-center">
+                               <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Waiting for URL...</p>
+                               <p className="text-[8px] font-medium text-slate-400 mt-0.5">Pasang Link Image untuk Visualizer</p>
+                            </div>
+                         </div>
+                      )}
+
+                      {/* Live Preview Question Text */}
+                      <h4 className="text-sm font-bold text-slate-900 mb-5 leading-relaxed line-clamp-3 min-h-[40px] border-l-4 border-slate-200 pl-3">
+                         {formQuestionText.trim() ? formQuestionText : <span className="text-slate-300 italic font-medium">Tulis pertanyaan triviamu di form sebelah kiri...</span>}
+                      </h4>
+
+                      {/* Live Preview Options */}
+                      <div className="grid grid-cols-1 gap-2">
+                         {[formOptionA, formOptionB, formOptionC, formOptionD].map((optText, idx) => {
+                            const label = String.fromCharCode(65 + idx); 
+                            const isCorrect = formCorrectAnswer === label;
+                            return (
+                               <div 
+                                  key={label} 
+                                  className={`text-xs p-3 rounded-lg border font-bold transition-all duration-300 flex items-center justify-between group ${
+                                    isCorrect 
+                                      ? 'bg-emerald-50 border-emerald-400 text-emerald-900 shadow-sm shadow-emerald-500/5' 
+                                      : 'bg-white border-slate-200 text-slate-600'
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-3 overflow-hidden w-full">
+                                     <span className={`w-6 h-6 rounded flex items-center justify-center font-black text-[10px] shrink-0 transition-colors ${
+                                        isCorrect ? 'bg-emerald-500 text-white shadow-sm' : 'bg-slate-100 text-slate-500 group-hover:bg-slate-200'
+                                     }`}>{label}</span>
+                                     <span className="truncate flex-grow">
+                                        {optText.trim() ? optText : <span className="text-slate-300 italic font-medium">Opsi {label}...</span>}
+                                     </span>
+                                  </div>
+                                  {isCorrect && <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 animate-in zoom-in duration-300" />}
+                               </div>
+                            );
+                         })}
+                      </div>
+                      
+                      <div className="mt-6 text-[8px] font-bold text-slate-400 text-center uppercase tracking-widest border-t border-slate-100 pt-3">
+                         Paddock IQ Simulator v1.0
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Data Table */}
