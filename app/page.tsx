@@ -11,10 +11,10 @@ export default function PaddockPulse() {
   const [currentView, setCurrentView] = useState<string>("landing");
   
   // Database State
-  const [questions, setQuestions] = useState<Question[]>([]);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
-  const [isFirebase, setIsFirebase] = useState<boolean>(false);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [leaderboardTotal, setLeaderboardTotal] = useState<number>(0);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLeaderboardLoading, setIsLeaderboardLoading] = useState<boolean>(false);
 
   // Pagination State
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -24,10 +24,28 @@ export default function PaddockPulse() {
   const [lbFilterLevel, setLbFilterLevel] = useState<string>("all");
   const [lbFilterStage, setLbFilterStage] = useState<string>("all");
 
-  // Auto-reset leaderboard page to 1 on filter change
   useEffect(() => {
     setCurrentPage(1);
   }, [lbFilterLevel, lbFilterStage]);
+
+  // Live server-side paginated leaderboard data fetcher
+  useEffect(() => {
+    if (currentView === "leaderboard") {
+      const fetch = async () => {
+        setIsLeaderboardLoading(true);
+        try {
+          const res = await dbService.getLeaderboard(currentPage, itemsPerPage, lbFilterLevel, lbFilterStage);
+          setLeaderboard(res.data);
+          setLeaderboardTotal(res.count);
+        } catch (e) {
+          console.error("Pagination fetch failed:", e);
+        } finally {
+          setIsLeaderboardLoading(false);
+        }
+      };
+      fetch();
+    }
+  }, [currentView, currentPage, lbFilterLevel, lbFilterStage]);
 
   // Quiz Engine State
   const [selectedLevel, setSelectedLevel] = useState<"basic" | "intermediate" | "advanced">("basic");
@@ -49,24 +67,6 @@ export default function PaddockPulse() {
   const [driverPhoto, setDriverPhoto] = useState<string | null>(null);
   const [isExportingImage, setIsExportingImage] = useState(false);
 
-  // Admin CRUD Form State
-  const [isAdminAuth, setIsAdminAuth] = useState<boolean>(false);
-  const [adminPassword, setAdminPassword] = useState<string>("");
-  const [formLevel, setFormLevel] = useState<"basic" | "intermediate" | "advanced">("basic");
-  const [formStage, setFormStage] = useState<number>(1);
-  const [formQuestionText, setFormQuestionText] = useState<string>("");
-  const [formImageUrl, setFormImageUrl] = useState<string>("");
-  const [formOptionA, setFormOptionA] = useState<string>("");
-  const [formOptionB, setFormOptionB] = useState<string>("");
-  const [formOptionC, setFormOptionC] = useState<string>("");
-  const [formOptionD, setFormOptionD] = useState<string>("");
-  const [formCorrectAnswer, setFormCorrectAnswer] = useState<string>("A");
-  
-  const [editModeId, setEditModeId] = useState<string | null>(null);
-  const [crudSuccess, setCrudSuccess] = useState<string | null>(null);
-
-  const [filterLevel, setFilterLevel] = useState<string>("all");
-  const [filterStage, setFilterStage] = useState<string>("all");
 
   // Fetch Questions and Leaderboard on Mount
   useEffect(() => {
@@ -85,7 +85,6 @@ export default function PaddockPulse() {
         setDriverName(savedName);
       }
     }
-    loadAllData();
   }, []);
 
   // Save unlocked stages on change
@@ -95,53 +94,44 @@ export default function PaddockPulse() {
     }
   }, [unlockedStages]);
 
-  // Auto-sync historical certificates from Global Leaderboard based on active Driver Alias
+  // Auto-sync historical certificates from Targeted User Query (Low Overhead)
   useEffect(() => {
-    if (!driverName.trim() || leaderboard.length === 0) return;
+    if (!driverName.trim()) return;
     
-    setCompletedLicenses(prev => {
-      const localCopy = { ...prev };
-      let hasChanged = false;
-      const searchAlias = driverName.trim().toLowerCase();
+    const syncUserData = async () => {
+      try {
+        const userRecords = await dbService.getUserRecord(driverName);
+        if (userRecords.length === 0) return;
 
-      leaderboard.forEach(entry => {
-        if (entry.name && entry.name.trim().toLowerCase() === searchAlias && Number(entry.stage) === 3 && Number(entry.score) >= 50) {
-          const existing = localCopy[entry.level];
-          // If not tracked locally, or leaderboard entry is valid
-          if (!existing || entry.score > existing.score || (entry.score === existing.score && (entry.timeTaken || 999999) < (existing.timeTaken || 999999))) {
-            localCopy[entry.level] = { 
-              score: entry.score, 
-              timeTaken: entry.timeTaken !== undefined ? entry.timeTaken : 0 
-            };
-            hasChanged = true;
+        setCompletedLicenses(prev => {
+          const localCopy = { ...prev };
+          let hasChanged = false;
+
+          userRecords.forEach(entry => {
+            const existing = localCopy[entry.level];
+            if (!existing || entry.score > existing.score || (entry.score === existing.score && (entry.timeTaken || 999999) < (existing.timeTaken || 999999))) {
+              localCopy[entry.level] = { 
+                score: entry.score, 
+                timeTaken: entry.timeTaken !== undefined ? entry.timeTaken : 0 
+              };
+              hasChanged = true;
+            }
+          });
+
+          if (hasChanged) {
+            if (typeof window !== "undefined") {
+              localStorage.setItem("paddock_pulse_licenses", JSON.stringify(localCopy));
+            }
+            return localCopy;
           }
-        }
-      });
-
-      if (hasChanged) {
-        if (typeof window !== "undefined") {
-          localStorage.setItem("paddock_pulse_licenses", JSON.stringify(localCopy));
-        }
-        return localCopy;
+          return prev;
+        });
+      } catch (error) {
+        console.warn("Targeted history sync failed:", error);
       }
-      return prev;
-    });
-  }, [leaderboard, driverName]);
-
-  const loadAllData = async () => {
-    setIsLoading(true);
-    try {
-      const allQ = await dbService.getQuestions();
-      setQuestions(allQ);
-      const lb = await dbService.getLeaderboard();
-      setLeaderboard(lb);
-    } catch (err) {
-      console.error("Error loading initial data:", err);
-    } finally {
-      setIsLoading(false);
-      setIsFirebase(dbService.isFirebaseActive());
-    }
-  };
+    };
+    syncUserData();
+  }, [driverName]);
 
   // Navigate & view controller
   const navigateTo = (view: string) => {
@@ -309,7 +299,6 @@ export default function PaddockPulse() {
         timeTaken: finalTime,
         createdAt: new Date().toISOString()
       });
-      await loadAllData();
       
       // Only redirect if explicitly requested (like clicking manual submit button)
       if (!skipRedirect) {
@@ -326,109 +315,6 @@ export default function PaddockPulse() {
     }
   };
 
-  // Admin Login
-  const handleAdminLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (adminPassword === "240400") {
-      setIsAdminAuth(true);
-      setAdminPassword("");
-    } else {
-      alert("Invalid Race Control Clearance Code");
-    }
-  };
-
-  // Admin Save Question
-  const handleSaveQuestion = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setCrudSuccess(null);
-
-    const payload = {
-      level: formLevel,
-      stage: Number(formStage),
-      questionText: formQuestionText.trim(),
-      imageUrl: formImageUrl.trim(),
-      options: [formOptionA.trim(), formOptionB.trim(), formOptionC.trim(), formOptionD.trim()],
-      correctAnswer: formCorrectAnswer === "A" ? formOptionA.trim() :
-                     formCorrectAnswer === "B" ? formOptionB.trim() :
-                     formCorrectAnswer === "C" ? formOptionC.trim() : formOptionD.trim()
-    };
-
-    try {
-      if (editModeId) {
-        await dbService.updateQuestion(editModeId, payload);
-        setCrudSuccess("Telemetry updated successfully.");
-        setEditModeId(null);
-      } else {
-        await dbService.addQuestion(payload);
-        setCrudSuccess("New telemetry profile injected successfully.");
-      }
-      await loadAllData();
-      
-      // reset fields
-      setFormQuestionText("");
-      setFormImageUrl("");
-      setFormOptionA("");
-      setFormOptionB("");
-      setFormOptionC("");
-      setFormOptionD("");
-    } catch (err) {
-      console.error(err);
-      alert("Error saving telemetry.");
-    }
-  };
-
-  // Admin Delete Question
-  const handleDeleteQuestion = async (id: string) => {
-    if (confirm("Are you sure you want to black-flag this telemetry? This action cannot be reversed.")) {
-      try {
-        await dbService.deleteQuestion(id);
-        setCrudSuccess("Telemetry deleted successfully.");
-        await loadAllData();
-      } catch (err) {
-        console.error(err);
-        alert("Error deleting telemetry.");
-      }
-    }
-  };
-
-  // Admin Edit Population
-  const populateEditForm = (q: Question) => {
-    setEditModeId(q.id || null);
-    setFormLevel(q.level);
-    setFormStage(q.stage || 1);
-    setFormQuestionText(q.questionText);
-    setFormImageUrl(q.imageUrl || "");
-    setFormOptionA(q.options[0] || "");
-    setFormOptionB(q.options[1] || "");
-    setFormOptionC(q.options[2] || "");
-    setFormOptionD(q.options[3] || "");
-    
-    if (q.correctAnswer === q.options[0]) setFormCorrectAnswer("A");
-    else if (q.correctAnswer === q.options[1]) setFormCorrectAnswer("B");
-    else if (q.correctAnswer === q.options[2]) setFormCorrectAnswer("C");
-    else setFormCorrectAnswer("D");
-    
-    // scroll to form
-    if (typeof window !== "undefined") {
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    }
-  };
-
-  const handleForceSync = async () => {
-    if(confirm("WARNING: This will wipe your live Firestore 'questions' collection and re-seed it with the 18 default campaign questions! Proceed?")) {
-      setIsLoading(true);
-      try {
-        await dbService.forceSyncDefaultsToFirestore();
-        await loadAllData();
-        setCrudSuccess("FIRESTORE FULLY SYNCED WITH DEFAULT CAMPAIGN QUESTIONS!");
-      } catch (err) {
-        console.error(err);
-        alert("Failed to force sync.");
-      } finally {
-        setIsLoading(false);
-      }
-    }
-  };
 
   const generateLicenseId = () => {
     return `FIA-${new Date().getFullYear()}-${Math.floor(10000 + Math.random() * 90000)}`;
@@ -475,14 +361,8 @@ export default function PaddockPulse() {
     } finally { setIsExportingImage(false); }
   };
 
-  const filteredLeaderboard = leaderboard.filter(entry => {
-    const matchLevel = lbFilterLevel === "all" || entry.level === lbFilterLevel;
-    const matchStage = lbFilterStage === "all" || Number(entry.stage) === Number(lbFilterStage);
-    return matchLevel && matchStage;
-  });
-
-  const totalPages = Math.max(1, Math.ceil(filteredLeaderboard.length / itemsPerPage));
-  const paginatedLeaderboard = filteredLeaderboard.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+  const paginatedLeaderboard = leaderboard;
+  const totalPages = Math.max(1, Math.ceil(leaderboardTotal / itemsPerPage));
 
   return (
     <div className="flex flex-col flex-1 min-h-screen overflow-x-hidden paddock-background">
@@ -1334,7 +1214,16 @@ export default function PaddockPulse() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredLeaderboard.length === 0 ? (
+                    {isLeaderboardLoading ? (
+                      <tr>
+                        <td colSpan={5} className="p-20 text-center text-slate-500 font-black uppercase tracking-widest">
+                          <div className="flex flex-col items-center gap-4 justify-center">
+                            <div className="w-10 h-10 border-4 border-slate-200 border-t-f1-red rounded-full animate-spin"></div>
+                            <span className="text-xs animate-pulse text-slate-600">Fetching Sector Data...</span>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : paginatedLeaderboard.length === 0 ? (
                       <tr>
                         <td colSpan={5} className="p-12 text-center text-slate-500 font-bold uppercase tracking-widest">
                           No telemetry data recorded yet.
@@ -1389,10 +1278,10 @@ export default function PaddockPulse() {
               </div>
 
               {/* Pagination Controls */}
-              {filteredLeaderboard.length > 0 && (
+              {leaderboardTotal > 0 && (
                 <div className="bg-slate-50 px-6 py-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
                   <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
-                    Telemetry Feed: Showing {((currentPage - 1) * itemsPerPage) + 1} - {Math.min(currentPage * itemsPerPage, filteredLeaderboard.length)} of {filteredLeaderboard.length} Drivers
+                    Telemetry Feed: Showing {((currentPage - 1) * itemsPerPage) + 1} - {Math.min(currentPage * itemsPerPage, leaderboardTotal)} of {leaderboardTotal} Drivers
                   </div>
                   <div className="flex items-center gap-3">
                     <button 
@@ -1419,378 +1308,6 @@ export default function PaddockPulse() {
           </div>
         )}
 
-        {/* 6. ADMIN / RACE CONTROL VIEW */}
-        {currentView === "admin" && (
-          <div className="w-full max-w-4xl animate-fade-in z-10 flex flex-col my-10">
-            <div className="flex justify-between items-end mb-8">
-              <div>
-                <div className="inline-flex items-center gap-2 bg-f1-red/10 border border-f1-red/30 px-3 py-1 rounded-full mb-4">
-                  <Shield className="w-4 h-4 text-f1-red" />
-                  <span className="text-xs font-bold uppercase tracking-widest text-f1-red">Restricted Access</span>
-                </div>
-                <h2 className="text-4xl md:text-5xl font-black uppercase tracking-tighter text-slate-900">RACE <span className="text-transparent bg-clip-text bg-gradient-to-r from-f1-red to-orange-500">CONTROL</span></h2>
-              </div>
-              <button 
-                onClick={() => navigateTo("landing")}
-                className="bg-slate-100 text-slate-900 text-xs font-bold uppercase tracking-widest px-4 py-2 rounded border border-slate-300 hover:bg-slate-200 transition"
-              >
-                Exit to Grid
-              </button>
-            </div>
-
-            {!isAdminAuth ? (
-              <div className="paddock-card rounded-2xl p-8 max-w-md w-full mx-auto border-t-4 border-t-f1-red text-center">
-                <Lock className="w-12 h-12 text-slate-600 mx-auto mb-6" />
-                <h3 className="text-xl font-bold text-slate-900 mb-6 uppercase tracking-widest">Authentication Required</h3>
-                <form onSubmit={handleAdminLogin}>
-                  <input 
-                    type="password"
-                    value={adminPassword}
-                    onChange={(e) => setAdminPassword(e.target.value)}
-                    placeholder="Enter Clearance Code..."
-                    className="w-full bg-white border border-slate-200 rounded-lg px-4 py-3 text-center text-slate-900 font-mono tracking-widest focus:outline-none focus:border-f1-red transition-colors mb-4"
-                  />
-                  <button type="submit" className="w-full glowing-red-btn bg-slate-900 text-white hover:bg-slate-800 font-black uppercase tracking-widest py-3 rounded-lg hover:bg-slate-200 transition">
-                    Grant Access
-                  </button>
-                </form>
-              </div>
-            ) : (
-              <div className="space-y-8">
-                {crudSuccess && (
-                  <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-4 py-3 rounded-lg text-sm font-bold flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4" />
-                      {crudSuccess}
-                    </div>
-                    <button onClick={() => setCrudSuccess(null)} className="text-emerald-400/50 hover:text-emerald-400">&times;</button>
-                  </div>
-                )}
-
-                <div className="flex justify-end">
-                  <button 
-                    onClick={handleForceSync}
-                    className="flex items-center gap-2 bg-f1-red/20 text-f1-red border border-f1-red/30 px-4 py-2 rounded hover:bg-f1-red/30 transition text-xs font-bold tracking-widest uppercase"
-                  >
-                    <RefreshCw className="w-3 h-3" />
-                    Force Sync Defaults to Firestore
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-                  {/* LEFT COLUMN: Input Controls */}
-                  <div className="lg:col-span-7 paddock-card rounded-2xl p-6 md:p-8 border border-slate-200">
-                    <h3 className="text-lg font-bold text-slate-900 uppercase tracking-widest mb-6 flex items-center gap-2 border-b border-slate-200 pb-4">
-                      {editModeId ? "Edit Telemetry Profile" : "Inject New Telemetry"}
-                      {editModeId && <span className="text-[10px] bg-amber-500/20 text-amber-500 px-2 py-1 rounded">EDIT MODE</span>}
-                    </h3>
-
-                  <form onSubmit={handleSaveQuestion} className="space-y-6">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div>
-                        <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-widest mb-2">Compound Level</label>
-                        <select 
-                          value={formLevel} 
-                          onChange={(e) => setFormLevel(e.target.value as any)}
-                          className="w-full bg-white border border-slate-200 rounded-lg px-4 py-3 text-slate-900 font-bold focus:outline-none focus:border-f1-red transition-colors appearance-none"
-                        >
-                          <option value="basic">Basic (C1 Hard)</option>
-                          <option value="intermediate">Intermediate (C3 Medium)</option>
-                          <option value="advanced">Advanced (C5 Soft)</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-widest mb-2">Stage</label>
-                        <select 
-                          value={formStage} 
-                          onChange={(e) => setFormStage(Number(e.target.value))}
-                          className="w-full bg-white border border-slate-200 rounded-lg px-4 py-3 text-slate-900 font-bold focus:outline-none focus:border-f1-red transition-colors appearance-none"
-                        >
-                          <option value={1}>Stage 1: FP (Free Practice)</option>
-                          <option value={2}>Stage 2: Qualifying</option>
-                          <option value={3}>Stage 3: Race</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-widest mb-2">Question Text</label>
-                      <textarea 
-                        required
-                        value={formQuestionText}
-                        onChange={(e) => setFormQuestionText(e.target.value)}
-                        placeholder="Enter the trivia question..."
-                        rows={2}
-                        className="w-full bg-white border border-slate-200 rounded-lg px-4 py-3 text-slate-900 focus:outline-none focus:border-f1-red transition-colors resize-none placeholder-slate-600"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-widest mb-2">Image URL (Unsplash/Direct Link)</label>
-                      <input 
-                        type="url"
-                        required
-                        value={formImageUrl}
-                        onChange={(e) => setFormImageUrl(e.target.value)}
-                        placeholder="https://images.unsplash.com/..."
-                        className="w-full bg-white border border-slate-200 rounded-lg px-4 py-3 text-slate-900 text-sm focus:outline-none focus:border-f1-red transition-colors placeholder-slate-600"
-                      />
-                    </div>
-
-                    <div className="space-y-4 pt-4 border-t border-slate-200">
-                      <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-widest">Answer Options & Correct Key</label>
-                      
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {['A', 'B', 'C', 'D'].map((opt, idx) => {
-                          const val = idx === 0 ? formOptionA : idx === 1 ? formOptionB : idx === 2 ? formOptionC : formOptionD;
-                          const setter = idx === 0 ? setFormOptionA : idx === 1 ? setFormOptionB : idx === 2 ? setFormOptionC : setFormOptionD;
-                          const isCorrect = formCorrectAnswer === opt;
-                          
-                          return (
-                            <div key={opt} className={`flex items-center gap-3 p-3 rounded-lg border ${isCorrect ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-slate-50 border-slate-100'}`}>
-                              <button
-                                type="button"
-                                onClick={() => setFormCorrectAnswer(opt)}
-                                className={`shrink-0 w-8 h-8 rounded flex items-center justify-center font-black text-sm transition-colors ${
-                                  isCorrect ? 'bg-emerald-500 text-slate-900' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                                }`}
-                              >
-                                {opt}
-                              </button>
-                              <input 
-                                type="text"
-                                required
-                                value={val}
-                                onChange={(e) => setter(e.target.value)}
-                                placeholder={`Option ${opt}...`}
-                                className="flex-grow bg-transparent border-none text-slate-900 text-sm focus:outline-none placeholder-slate-600"
-                              />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    <div className="flex gap-4 pt-4">
-                      <button 
-                        type="submit"
-                        className="flex-1 glowing-red-btn bg-slate-900 text-white hover:bg-slate-800 font-black uppercase tracking-widest py-3 rounded-lg hover:bg-slate-200 transition"
-                      >
-                        {editModeId ? "UPDATE TELEMETRY" : "INJECT TELEMETRY"}
-                      </button>
-                      
-                      {editModeId && (
-                        <button 
-                          type="button"
-                          onClick={() => {
-                            setEditModeId(null);
-                            setFormQuestionText("");
-                            setFormImageUrl("");
-                            setFormOptionA("");
-                            setFormOptionB("");
-                            setFormOptionC("");
-                            setFormOptionD("");
-                          }}
-                          className="px-6 bg-slate-50 text-slate-900 font-bold tracking-widest uppercase text-xs rounded-lg border border-slate-200 hover:bg-slate-100 transition"
-                        >
-                          Cancel Edit
-                        </button>
-                      )}
-                    </div>
-                  </form>
-                  </div>
-
-                  {/* RIGHT COLUMN: Live Preview Mockup */}
-                  <div className="lg:col-span-5 lg:sticky lg:top-24 space-y-4 animate-fade-in">
-                    <div className="flex items-center justify-between px-2">
-                       <h3 className="text-xs font-black text-slate-600 uppercase tracking-widest flex items-center gap-2">
-                          <Camera className="w-3.5 h-3.5" />
-                          Live Sector Preview
-                       </h3>
-                       <div className="inline-flex items-center gap-1.5 bg-emerald-500 text-white text-[8px] font-black px-2 py-0.5 rounded-full tracking-widest uppercase animate-pulse">
-                         <div className="w-1 h-1 bg-white rounded-full"></div>
-                         REALTIME
-                       </div>
-                    </div>
-                    
-                    <div className="paddock-card rounded-2xl p-5 border border-slate-200 shadow-lg bg-white relative overflow-hidden border-t-4 border-t-f1-red">
-                      {/* Mock Viewport Decorator */}
-                      <div className="flex gap-1.5 mb-4 border-b border-slate-100 pb-3">
-                         <div className="w-2.5 h-2.5 rounded-full bg-slate-200" />
-                         <div className="w-2.5 h-2.5 rounded-full bg-slate-200" />
-                         <div className="w-2.5 h-2.5 rounded-full bg-slate-200" />
-                      </div>
-
-                      {/* Live Preview Image Container */}
-                      {formImageUrl && formImageUrl.trim() ? (
-                         <div className="w-full aspect-[16/9] bg-slate-100 rounded-xl border border-slate-200 overflow-hidden relative mb-4 group shadow-inner">
-                            <img 
-                               src={formImageUrl} 
-                               alt="Preview" 
-                               className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-all"
-                               onError={(e) => { e.currentTarget.src = "https://placehold.co/600x400/f1f5f9/94a3b8?text=Loading+Image+Wait..."; }}
-                            />
-                            <div className="absolute top-2 right-2 bg-emerald-500/90 text-white text-[8px] font-black px-2 py-1 rounded-md uppercase tracking-widest shadow-sm">Visual Active</div>
-                         </div>
-                      ) : (
-                         <div className="w-full aspect-[16/9] bg-slate-50 rounded-xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400 gap-3 mb-4 shadow-inner">
-                            <Camera className="w-10 h-10 opacity-30" />
-                            <div className="text-center">
-                               <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Waiting for URL...</p>
-                               <p className="text-[8px] font-medium text-slate-400 mt-0.5">Pasang Link Image untuk Visualizer</p>
-                            </div>
-                         </div>
-                      )}
-
-                      {/* Live Preview Question Text */}
-                      <h4 className="text-sm font-bold text-slate-900 mb-5 leading-relaxed line-clamp-3 min-h-[40px] border-l-4 border-slate-200 pl-3">
-                         {formQuestionText.trim() ? formQuestionText : <span className="text-slate-300 italic font-medium">Tulis pertanyaan triviamu di form sebelah kiri...</span>}
-                      </h4>
-
-                      {/* Live Preview Options */}
-                      <div className="grid grid-cols-1 gap-2">
-                         {[formOptionA, formOptionB, formOptionC, formOptionD].map((optText, idx) => {
-                            const label = String.fromCharCode(65 + idx); 
-                            const isCorrect = formCorrectAnswer === label;
-                            return (
-                               <div 
-                                  key={label} 
-                                  className={`text-xs p-3 rounded-lg border font-bold transition-all duration-300 flex items-center justify-between group ${
-                                    isCorrect 
-                                      ? 'bg-emerald-50 border-emerald-400 text-emerald-900 shadow-sm shadow-emerald-500/5' 
-                                      : 'bg-white border-slate-200 text-slate-600'
-                                  }`}
-                                >
-                                  <div className="flex items-center gap-3 overflow-hidden w-full">
-                                     <span className={`w-6 h-6 rounded flex items-center justify-center font-black text-[10px] shrink-0 transition-colors ${
-                                        isCorrect ? 'bg-emerald-500 text-white shadow-sm' : 'bg-slate-100 text-slate-500 group-hover:bg-slate-200'
-                                     }`}>{label}</span>
-                                     <span className="truncate flex-grow">
-                                        {optText.trim() ? optText : <span className="text-slate-300 italic font-medium">Opsi {label}...</span>}
-                                     </span>
-                                  </div>
-                                  {isCorrect && <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 animate-in zoom-in duration-300" />}
-                               </div>
-                            );
-                         })}
-                      </div>
-                      
-                      <div className="mt-6 text-[8px] font-bold text-slate-400 text-center uppercase tracking-widest border-t border-slate-100 pt-3">
-                         Paddock IQ Simulator v1.0
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Data Table */}
-                <div className="paddock-card rounded-2xl border border-slate-200 overflow-hidden">
-                  <div className="p-6 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
-                    <h3 className="text-sm font-bold text-slate-900 uppercase tracking-widest">
-                      Active Database Records ({questions.filter(q => (filterLevel === "all" || q.level === filterLevel) && (filterStage === "all" || Number(q.stage) === Number(filterStage))).length} / {questions.length})
-                    </h3>
-                    <button 
-                      onClick={loadAllData}
-                      disabled={isLoading}
-                      className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 text-[10px] font-bold uppercase tracking-widest rounded shadow-sm transition disabled:opacity-50"
-                    >
-                      <RefreshCw className={`w-3 h-3 ${isLoading ? "animate-spin text-f1-red" : "text-slate-500"}`} />
-                      {isLoading ? "Loading..." : "Load Data"}
-                    </button>
-                  </div>
-                  <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/50 flex flex-wrap gap-4 items-center">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Filter Level:</span>
-                      <select
-                        value={filterLevel}
-                        onChange={(e) => setFilterLevel(e.target.value)}
-                        className="bg-white border border-slate-200 rounded px-2 py-1 text-xs font-semibold text-slate-700 focus:outline-none focus:border-f1-red"
-                      >
-                        <option value="all">All Levels</option>
-                        <option value="basic">Basic (C1)</option>
-                        <option value="intermediate">Intermediate (C3)</option>
-                        <option value="advanced">Advanced (C5)</option>
-                      </select>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Filter Stage:</span>
-                      <select
-                        value={filterStage}
-                        onChange={(e) => setFilterStage(e.target.value)}
-                        className="bg-white border border-slate-200 rounded px-2 py-1 text-xs font-semibold text-slate-700 focus:outline-none focus:border-f1-red"
-                      >
-                        <option value="all">All Stages</option>
-                        <option value="1">Stage 1 (FP)</option>
-                        <option value="2">Stage 2 (Qualifying)</option>
-                        <option value="3">Stage 3 (Race)</option>
-                      </select>
-                    </div>
-                    { (filterLevel !== "all" || filterStage !== "all") && (
-                      <button
-                        onClick={() => { setFilterLevel("all"); setFilterStage("all"); }}
-                        className="text-[10px] font-bold text-f1-red uppercase tracking-widest hover:underline ml-auto"
-                      >
-                        Clear Filters
-                      </button>
-                    )}
-                  </div>
-                  <div className="overflow-x-auto max-h-[500px]">
-                    <table className="w-full text-left text-sm whitespace-nowrap">
-                      <thead className="sticky top-0 bg-white border-b border-slate-200">
-                        <tr className="text-[10px] uppercase tracking-widest text-slate-600">
-                          <th className="p-4">Compound</th>
-                          <th className="p-4">Stage</th>
-                          <th className="p-4">Question String</th>
-                          <th className="p-4">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-white/5">
-                        {questions
-                          .filter(q => {
-                            const matchesLevel = filterLevel === "all" || q.level === filterLevel;
-                            const matchesStage = filterStage === "all" || Number(q.stage) === Number(filterStage);
-                            return matchesLevel && matchesStage;
-                          })
-                          .map((q, idx) => (
-                          <tr key={q.id || idx} className="hover:bg-slate-50 transition-colors">
-                            <td className="p-4">
-                              <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded border ${
-                                q.level === 'advanced' ? 'bg-f1-red/20 text-f1-red border-f1-red/30' :
-                                q.level === 'intermediate' ? 'bg-amber-500/20 text-amber-500 border-amber-500/30' :
-                                'bg-slate-500/20 text-slate-700 border-slate-500/30'
-                              }`}>
-                                {q.level}
-                              </span>
-                            </td>
-                            <td className="p-4 text-slate-700 font-bold">Stage {q.stage || 1}</td>
-                            <td className="p-4">
-                              <div className="max-w-xs truncate text-slate-900">{q.questionText}</div>
-                            </td>
-                            <td className="p-4">
-                              <div className="flex items-center gap-2">
-                                <button 
-                                  onClick={() => populateEditForm(q)}
-                                  className="text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 transition"
-                                >
-                                  Edit
-                                </button>
-                                <button 
-                                  onClick={() => handleDeleteQuestion(q.id!)}
-                                  className="text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded bg-f1-red/20 text-f1-red hover:bg-f1-red/30 transition"
-                                >
-                                  Delete
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
 
       </main>
 
@@ -1827,12 +1344,6 @@ export default function PaddockPulse() {
             {/* Copyright & Admin */}
             <div className="flex flex-col items-center gap-1.5">
               <p className="text-[10px] font-bold tracking-[0.2em] text-slate-400 uppercase">PADDOCK IQ © {new Date().getFullYear()} — by @yeppingcouple</p>
-              <button 
-                onClick={() => navigateTo("admin")}
-                className="text-[10px] font-bold tracking-[0.2em] text-slate-400 uppercase hover:text-f1-red transition-colors underline decoration-slate-300 underline-offset-4"
-              >
-                Race Control Access
-              </button>
             </div>
           </div>
         </div>

@@ -1,17 +1,4 @@
-import { initializeApp, getApps, getApp } from "firebase/app";
-import { 
-  getFirestore, 
-  collection, 
-  addDoc, 
-  getDocs, 
-  doc, 
-  deleteDoc, 
-  updateDoc, 
-  query, 
-  orderBy, 
-  limit, 
-  where 
-} from "firebase/firestore";
+import { supabase } from "./supabase";
 
 // Types
 export interface Question {
@@ -34,7 +21,7 @@ export interface LeaderboardEntry {
   createdAt: string;
 }
 
-// Default question bank — BASIC: 30 questions (10 per stage), INTERMEDIATE & ADVANCED: 2 per stage
+// Default question bank (maintained as a fallback/initial seeder)
 const DEFAULT_QUESTIONS: Question[] = [
   // ═══ BASIC STAGE 1: FREE PRACTICE (10) ═══
   { id:"b1", level:"basic", stage:1, questionText:"Berapa total sesi Free Practice sebelum Qualifying di satu weekend F1?", imageUrl:"https://images.unsplash.com/photo-1504707748692-419802cf939d?auto=format&fit=crop&w=800&q=80", options:["1 sesi","2 sesi","3 sesi","4 sesi"], correctAnswer:"3 sesi" },
@@ -69,9 +56,7 @@ const DEFAULT_QUESTIONS: Question[] = [
   { id:"b28", level:"basic", stage:3, questionText:"Apa itu 'DRS' yang sering diomongin saat race?", imageUrl:"https://images.unsplash.com/photo-1562591176-788df0a256f1?auto=format&fit=crop&w=800&q=80", options:["Direct Racing System","Drag Reduction System","Digital Rear Speed","Double Racing Speed"], correctAnswer:"Drag Reduction System" },
   { id:"b29", level:"basic", stage:3, questionText:"Berapa lap yang biasanya dilakukan dalam satu F1 race?", imageUrl:"https://images.unsplash.com/photo-1541348263662-e068662d82af?auto=format&fit=crop&w=800&q=80", options:["10-20 lap","20-40 lap","40-60 lap","60-100 lap"], correctAnswer:"40-60 lap" },
   { id:"b30", level:"basic", stage:3, questionText:"Siapa yang menjadi person utama yang communicate dengan driver via radio saat race?", imageUrl:"https://images.unsplash.com/photo-1616422285623-13ff0162193c?auto=format&fit=crop&w=800&q=80", options:["Tim Principal","Race Engineer","Strategy Engineer","Chief Mechanic"], correctAnswer:"Race Engineer" },
-
-  // ================= INTERMEDIATE LEVEL (C3) =================
-  // --- Stage 1 ---
+  // ══════ INTERMEDIATE ══════
   {
     id: "q6",
     level: "intermediate",
@@ -90,7 +75,6 @@ const DEFAULT_QUESTIONS: Question[] = [
     options: ["Jochen Rindt", "Ayrton Senna", "Jim Clark", "Gilles Villeneuve"],
     correctAnswer: "Jochen Rindt"
   },
-  // --- Stage 2 ---
   {
     id: "q8",
     level: "intermediate",
@@ -109,7 +93,6 @@ const DEFAULT_QUESTIONS: Question[] = [
     options: ["DAS (Dual Axis Steering)", "FRIC Suspension", "F-Duct System", "Active Aero Steering"],
     correctAnswer: "DAS (Dual Axis Steering)"
   },
-  // --- Stage 3 ---
   {
     id: "q10",
     level: "intermediate",
@@ -128,9 +111,7 @@ const DEFAULT_QUESTIONS: Question[] = [
     options: ["Fernando Alonso", "Kimi Räikkönen", "Rubens Barrichello", "Lewis Hamilton"],
     correctAnswer: "Fernando Alonso"
   },
-
-  // ================= ADVANCED LEVEL (C5) =================
-  // --- Stage 1 ---
+  // ══════ ADVANCED ══════
   {
     id: "q11",
     level: "advanced",
@@ -149,7 +130,6 @@ const DEFAULT_QUESTIONS: Question[] = [
     options: ["Max Verstappen", "Sebastian Vettel", "Lewis Hamilton", "Charles Leclerc"],
     correctAnswer: "Max Verstappen"
   },
-  // --- Stage 2 ---
   {
     id: "q12",
     level: "advanced",
@@ -168,7 +148,6 @@ const DEFAULT_QUESTIONS: Question[] = [
     options: ["Jenson Button", "Sebastian Vettel", "Mark Webber", "Michael Schumacher"],
     correctAnswer: "Jenson Button"
   },
-  // --- Stage 3 ---
   {
     id: "q13",
     level: "advanced",
@@ -196,290 +175,166 @@ const DEFAULT_LEADERBOARD: LeaderboardEntry[] = [
   { id: "lb4", name: "NewbieF1", score: 50, level: "basic", stage: 1, createdAt: new Date(Date.now() - 3600000 * 48).toISOString() }
 ];
 
-// Firebase Config
-const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID
-};
-
-// Check if Firebase keys are fully configured
-const isFirebaseConfigured = !!(
-  firebaseConfig.apiKey &&
-  firebaseConfig.projectId &&
-  firebaseConfig.appId
-);
-
-let db: any = null;
-let useFirebase = false;
-
-if (isFirebaseConfigured) {
-  try {
-    const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-    db = getFirestore(app);
-    useFirebase = true;
-    console.log("Firebase initialized successfully in Paddock Pulse.");
-  } catch (error) {
-    console.warn("Failed to initialize Firebase, falling back to Local Storage:", error);
-  }
-} else {
-  console.log("No Firebase config detected. Running Paddock Pulse in Local Storage mode.");
-}
-
-// --- TELEMETRY RESILIENT CIRCUIT BREAKER (TIMEOUT HELPER) ---
-const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number = 10000): Promise<T> => {
+// --- TELEMETRY RESILIENT TIMEOUT HELPER ---
+const withTimeout = async <T>(promiseLike: PromiseLike<T>, timeoutMs: number = 10000): Promise<T> => {
   return Promise.race([
-    promise,
+    Promise.resolve(promiseLike),
     new Promise<never>((_, reject) => 
-      setTimeout(() => reject(new Error("Firebase network connection timed out")), timeoutMs)
+      setTimeout(() => reject(new Error("Database operation timed out")), timeoutMs)
     )
   ]);
 };
 
-// --- LOCAL STORAGE HELPERS ---
-const getLocalQuestions = (): Question[] => {
-  if (typeof window === "undefined") return DEFAULT_QUESTIONS;
-  const data = localStorage.getItem("paddock_pulse_questions");
-  if (!data) {
-    localStorage.setItem("paddock_pulse_questions", JSON.stringify(DEFAULT_QUESTIONS));
-    return DEFAULT_QUESTIONS;
-  }
-  return JSON.parse(data);
-};
-
-const saveLocalQuestions = (questions: Question[]) => {
-  if (typeof window === "undefined") return;
-  localStorage.setItem("paddock_pulse_questions", JSON.stringify(questions));
-};
-
-const getLocalLeaderboard = (): LeaderboardEntry[] => {
-  if (typeof window === "undefined") return DEFAULT_LEADERBOARD;
-  const data = localStorage.getItem("paddock_pulse_leaderboard");
-  if (!data) {
-    localStorage.setItem("paddock_pulse_leaderboard", JSON.stringify(DEFAULT_LEADERBOARD));
-    return DEFAULT_LEADERBOARD;
-  }
-  return JSON.parse(data);
-};
-
-const saveLocalLeaderboard = (entries: LeaderboardEntry[]) => {
-  if (typeof window === "undefined") return;
-  localStorage.setItem("paddock_pulse_leaderboard", JSON.stringify(entries));
-};
-
 // --- PUBLIC DB API ---
 export const dbService = {
-  isFirebaseActive: () => useFirebase,
+  // Kept for API backwards compatibility with consumer files
+  isFirebaseActive: () => true, 
+  isSupabaseActive: () => true,
 
   // --- QUESTIONS CRUD ---
   async getQuestions(level?: "basic" | "intermediate" | "advanced", stage?: number): Promise<Question[]> {
-    if (useFirebase && db) {
-      try {
-        const qRef = collection(db, "questions");
-        const snapshot = await withTimeout(getDocs(qRef), 10000);
-        const list: Question[] = [];
-        snapshot.forEach((docSnap) => {
-          const data = docSnap.data();
-          list.push({ 
-            id: docSnap.id, 
-            level: data.level || 'basic',
-            stage: Number(data.stage) || 1,
-            questionText: data.questionText || '',
-            imageUrl: data.imageUrl || '',
-            options: data.options || [],
-            correctAnswer: data.correctAnswer || ''
-          } as Question);
-        });
+    try {
+      const { data, error } = await withTimeout(supabase.from("questions").select("*"), 10000);
+      
+      if (error) throw error;
 
-        console.log(`[PaddockIQ/DB] Firebase returned ${list.length} total questions`);
+      const list: Question[] = data || [];
 
-        // Seed default questions if Firestore is empty
-        if (list.length === 0) {
-          console.log("Seeding default questions into Firestore...");
-          for (const q of DEFAULT_QUESTIONS) {
-            const { id, ...qData } = q;
-            await addDoc(collection(db, "questions"), qData);
-          }
-          let filtered = DEFAULT_QUESTIONS;
-          if (level) filtered = filtered.filter(q => q.level === level);
-          if (stage) filtered = filtered.filter(q => Number(q.stage) === Number(stage));
-          console.log(`[PaddockIQ/DB] After seed, returning ${filtered.length} filtered`);
-          return filtered;
-        }
-
-        let filtered = list;
-        if (level) filtered = filtered.filter(q => q.level === level);
-        if (stage) filtered = filtered.filter(q => Number(q.stage) === Number(stage));
-        console.log(`[PaddockIQ/DB] Firebase filtered: ${filtered.length} (level=${level}, stage=${stage})`);
-        return filtered;
-      } catch (err) {
-        console.warn("Firestore getQuestions failed or timed out. Tripping circuit breaker & falling back to local storage:", err);
-        useFirebase = false; // trip the circuit breaker for this session
+      // Auto-seed fallback if DB exists but table empty
+      if (list.length === 0) {
+        console.log("[PaddockIQ] Seeding initial question database...");
+        const seedData = DEFAULT_QUESTIONS.map(({ id, ...rest }) => rest);
+        const { data: inserted } = await supabase.from("questions").insert(seedData).select();
+        
+        let results = (inserted as Question[]) || DEFAULT_QUESTIONS;
+        if (level) results = results.filter(q => q.level === level);
+        if (stage) results = results.filter(q => Number(q.stage) === Number(stage));
+        return results;
       }
-    }
 
-    // Local storage fallback
-    console.log(`[PaddockIQ/DB] Using local storage fallback`);
-    let filtered = getLocalQuestions();
-    console.log(`[PaddockIQ/DB] Local storage has ${filtered.length} total questions`);
-    if (level) filtered = filtered.filter(q => q.level === level);
-    if (stage) filtered = filtered.filter(q => Number(q.stage) === Number(stage));
-    console.log(`[PaddockIQ/DB] Local filtered: ${filtered.length} (level=${level}, stage=${stage})`);
-    return filtered;
+      let filtered = list;
+      if (level) filtered = filtered.filter(q => q.level === level);
+      if (stage) filtered = filtered.filter(q => Number(q.stage) === Number(stage));
+      return filtered;
+      
+    } catch (err) {
+      console.error("[PaddockIQ] Supabase error fetching questions:", err);
+      // Last resort runtime fallback directly to encoded constants
+      let results = [...DEFAULT_QUESTIONS];
+      if (level) results = results.filter(q => q.level === level);
+      if (stage) results = results.filter(q => Number(q.stage) === Number(stage));
+      return results;
+    }
   },
 
   async addQuestion(question: Omit<Question, "id">): Promise<Question> {
-    if (useFirebase && db) {
-      try {
-        const docRef = await withTimeout(addDoc(collection(db, "questions"), question), 10000);
-        return { id: docRef.id, ...question };
-      } catch (err) {
-        console.warn("Firestore addQuestion failed or timed out. Falling back to local storage:", err);
-        useFirebase = false; // trip circuit breaker
-      }
-    }
-
-    const list = getLocalQuestions();
-    const newQ = { id: Math.random().toString(36).substr(2, 9), ...question };
-    list.push(newQ);
-    saveLocalQuestions(list);
-    return newQ;
+    const { data, error } = await withTimeout(supabase.from("questions").insert(question).select().single(), 10000);
+    if (error) throw error;
+    return data as Question;
   },
 
   async updateQuestion(id: string, updated: Partial<Question>): Promise<boolean> {
-    if (useFirebase && db) {
-      try {
-        const qRef = doc(db, "questions", id);
-        await withTimeout(updateDoc(qRef, updated), 10000);
-        return true;
-      } catch (err) {
-        console.warn("Firestore updateQuestion failed or timed out:", err);
-        useFirebase = false; // trip circuit breaker
-      }
-    }
-
-    const list = getLocalQuestions();
-    const idx = list.findIndex(q => q.id === id);
-    if (idx !== -1) {
-      list[idx] = { ...list[idx], ...updated };
-      saveLocalQuestions(list);
-      return true;
-    }
-    return false;
+    const { error } = await withTimeout(supabase.from("questions").update(updated).eq("id", id), 10000);
+    if (error) throw error;
+    return true;
   },
 
   async deleteQuestion(id: string): Promise<boolean> {
-    if (useFirebase && db) {
-      try {
-        const qRef = doc(db, "questions", id);
-        await withTimeout(deleteDoc(qRef), 10000);
-        return true;
-      } catch (err) {
-        console.warn("Firestore deleteQuestion failed or timed out:", err);
-        useFirebase = false; // trip circuit breaker
-      }
-    }
-
-    const list = getLocalQuestions();
-    const filtered = list.filter(q => q.id !== id);
-    if (filtered.length !== list.length) {
-      saveLocalQuestions(filtered);
-      return true;
-    }
-    return false;
+    const { error } = await withTimeout(supabase.from("questions").delete().eq("id", id), 10000);
+    if (error) throw error;
+    return true;
   },
 
   // --- LEADERBOARD ---
-  async getLeaderboard(): Promise<LeaderboardEntry[]> {
-    // Common sort logic helper: High score first, then lowest timeTaken
-    const sortLogic = (a: LeaderboardEntry, b: LeaderboardEntry) => {
-      if (b.score !== a.score) return b.score - a.score;
-      const timeA = a.timeTaken !== undefined ? a.timeTaken : 999999;
-      const timeB = b.timeTaken !== undefined ? b.timeTaken : 999999;
-      return timeA - timeB;
-    };
+  async getLeaderboard(
+    page: number = 1, 
+    pageSize: number = 10, 
+    level?: string, 
+    stage?: string | number
+  ): Promise<{ data: LeaderboardEntry[], count: number }> {
+    try {
+      let query = supabase
+        .from("leaderboard")
+        .select("*", { count: 'exact' });
 
-    if (useFirebase && db) {
-      try {
-        const lbRef = collection(db, "leaderboard");
-        // Fetch top scores. We do final composite sorting client-side to avoid complex index requirement errors.
-        const q = query(lbRef, orderBy("score", "desc"));
-        const snapshot = await withTimeout(getDocs(q), 10000);
-        const list: LeaderboardEntry[] = [];
-        snapshot.forEach((doc) => {
-          list.push({ id: doc.id, ...doc.data() } as LeaderboardEntry);
-        });
-
-        if (list.length === 0) {
-          console.log("Seeding default leaderboard into Firestore...");
-          for (const entry of DEFAULT_LEADERBOARD) {
-            await addDoc(collection(db, "leaderboard"), entry);
-          }
-          return [...DEFAULT_LEADERBOARD].sort(sortLogic);
-        }
-
-        return list.sort(sortLogic);
-      } catch (err) {
-        console.warn("Firestore getLeaderboard failed or timed out. Tripping circuit breaker & falling back to local storage:", err);
-        useFirebase = false; // trip circuit breaker
+      if (level && level !== 'all') {
+        query = query.eq('level', level);
       }
-    }
+      
+      if (stage && stage !== 'all') {
+        query = query.eq('stage', Number(stage));
+      }
 
-    // Local storage fallback
-    return getLocalLeaderboard().sort(sortLogic);
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize - 1;
+
+      // Sort by highest score first, then lowest timeTaken second
+      query = query
+        .order("score", { ascending: false })
+        .order("timeTaken", { ascending: true, nullsFirst: false })
+        .range(from, to);
+      
+      const { data, error, count } = await withTimeout(query, 10000);
+      
+      if (error) throw error;
+      
+      return { 
+        data: data || [], 
+        count: count || 0 
+      };
+    } catch (err) {
+      console.error("[PaddockIQ] Error loading paginated leaderboard:", err);
+      // In case of error, provide subset of default entries simulate paginated fallback
+      return { 
+        data: [...DEFAULT_LEADERBOARD].slice(0, pageSize), 
+        count: DEFAULT_LEADERBOARD.length 
+      };
+    }
+  },
+
+  // New targeted helper method to avoid downloading full leaderboard for user cert-sync
+  async getUserRecord(driverName: string): Promise<LeaderboardEntry[]> {
+    try {
+      const { data, error } = await supabase
+        .from("leaderboard")
+        .select("*")
+        .ilike("name", driverName.trim())
+        .eq("stage", 3)
+        .gte("score", 50);
+      
+      if (error) throw error;
+      return data || [];
+    } catch (err) {
+      console.error("Error getting user history:", err);
+      return [];
+    }
   },
 
   async addToLeaderboard(entry: Omit<LeaderboardEntry, "id">): Promise<LeaderboardEntry> {
-    if (useFirebase && db) {
-      try {
-        const docRef = await withTimeout(addDoc(collection(db, "leaderboard"), entry), 10000);
-        return { id: docRef.id, ...entry };
-      } catch (err) {
-        console.warn("Firestore addToLeaderboard failed or timed out:", err);
-        useFirebase = false; // trip circuit breaker
-      }
-    }
-
-    const list = getLocalLeaderboard();
-    const newEntry = { id: Math.random().toString(36).substr(2, 9), ...entry };
-    list.push(newEntry);
-    saveLocalLeaderboard(list);
-    return newEntry;
+    const { data, error } = await withTimeout(supabase.from("leaderboard").insert(entry).select().single(), 10000);
+    if (error) throw error;
+    return data as LeaderboardEntry;
   },
 
   async resetLocalDb(): Promise<void> {
-    if (typeof window !== "undefined") {
-      localStorage.removeItem("paddock_pulse_questions");
-      localStorage.removeItem("paddock_pulse_leaderboard");
-      getLocalQuestions();
-      getLocalLeaderboard();
-    }
+    // NOP (No-Operation) in raw cloud mode, just there to not break consumer imports
+    return;
   },
 
   async forceSyncDefaultsToFirestore(): Promise<boolean> {
-    if (useFirebase && db) {
-      try {
-        const qRef = collection(db, "questions");
-        const snapshot = await withTimeout(getDocs(qRef), 4000);
-        const deletePromises: any[] = [];
-        snapshot.forEach((docSnap) => {
-          deletePromises.push(deleteDoc(doc(db, "questions", docSnap.id)));
-        });
-        await Promise.all(deletePromises);
-
-        for (const q of DEFAULT_QUESTIONS) {
-          const { id, ...qData } = q;
-          await addDoc(collection(db, "questions"), qData);
-        }
-        return true;
-      } catch (err) {
-        console.error("Failed to force sync defaults to Firestore:", err);
-        throw err;
+    // Keeps logical naming for interface consistency but executes targeting Supabase
+    try {
+      // Simple truncate and fill strategy
+      const { data } = await supabase.from("questions").select("id");
+      if (data && data.length > 0) {
+        await supabase.from("questions").delete().in("id", data.map(r => r.id));
       }
+      const seedData = DEFAULT_QUESTIONS.map(({ id, ...rest }) => rest);
+      await supabase.from("questions").insert(seedData);
+      return true;
+    } catch (err) {
+      console.error("Failed to force sync defaults:", err);
+      throw err;
     }
-    return false;
   }
 };
