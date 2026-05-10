@@ -1,26 +1,106 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f8fafc;
+  --foreground: #0f172a;
+  --f1-red: #e10600;
+  --f1-red-hover: #b30500;
+  --paddock-dark: #e2e8f0;
+  --paddock-panel: #ffffff;
 }
 
-@theme inline {
+@theme {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-f1-red: var(--f1-red);
+  --color-f1-red-hover: var(--f1-red-hover);
+  --color-paddock-dark: var(--paddock-dark);
+  --color-paddock-panel: var(--paddock-panel);
+  --font-sans: 'Outfit', 'Plus Jakarta Sans', system-ui, sans-serif;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* Custom CSS Styles for F1 Modern Paddock Theme */
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: 'Outfit', sans-serif;
+  background-image: 
+    radial-gradient(circle at 10% 20%, rgba(225, 6, 0, 0.05) 0%, transparent 40%),
+    radial-gradient(circle at 90% 80%, rgba(225, 6, 0, 0.03) 0%, transparent 40%),
+    linear-gradient(rgba(15, 23, 42, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 23, 42, 0.03) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 32px 32px, 32px 32px;
+  min-height: 100vh;
+}
+
+/* Custom Micro-Animations */
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 15px rgba(225, 6, 0, 0.4);
+    border-color: rgba(225, 6, 0, 0.8);
+  }
+  50% {
+    box-shadow: 0 0 25px rgba(225, 6, 0, 0.7);
+    border-color: rgba(225, 6, 0, 1);
   }
 }
 
-body {
+.glowing-red-btn {
+  box-shadow: 0 4px 20px rgba(225, 6, 0, 0.3);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glowing-red-btn:hover {
+  box-shadow: 0 0 25px rgba(225, 6, 0, 0.8);
+  transform: translateY(-2px);
+}
+
+.paddock-card {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
+  transition: all 0.3s ease;
+}
+
+.paddock-card:hover {
+  border-color: rgba(225, 6, 0, 0.3);
+  box-shadow: 0 15px 35px rgba(225, 6, 0, 0.15);
+}
+
+/* Red Racing Corner Cut decoration */
+.f1-corner-clip {
+  position: relative;
+}
+
+.f1-corner-clip::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 0 14px 14px 0;
+  border-color: transparent var(--f1-red) transparent transparent;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
   background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--paddock-panel);
+  border-radius: 4px;
+  border: 2px solid var(--background);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--f1-red);
 }
