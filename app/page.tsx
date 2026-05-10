@@ -20,6 +20,15 @@ export default function PaddockPulse() {
   const [currentPage, setCurrentPage] = useState<number>(1);
   const itemsPerPage = 10;
 
+  // Leaderboard Filters
+  const [lbFilterLevel, setLbFilterLevel] = useState<string>("all");
+  const [lbFilterStage, setLbFilterStage] = useState<string>("all");
+
+  // Auto-reset leaderboard page to 1 on filter change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [lbFilterLevel, lbFilterStage]);
+
   // Quiz Engine State
   const [selectedLevel, setSelectedLevel] = useState<"basic" | "intermediate" | "advanced">("basic");
   const [selectedStage, setSelectedStage] = useState<number>(1);
@@ -466,8 +475,14 @@ export default function PaddockPulse() {
     } finally { setIsExportingImage(false); }
   };
 
-  const totalPages = Math.max(1, Math.ceil(leaderboard.length / itemsPerPage));
-  const paginatedLeaderboard = leaderboard.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+  const filteredLeaderboard = leaderboard.filter(entry => {
+    const matchLevel = lbFilterLevel === "all" || entry.level === lbFilterLevel;
+    const matchStage = lbFilterStage === "all" || Number(entry.stage) === Number(lbFilterStage);
+    return matchLevel && matchStage;
+  });
+
+  const totalPages = Math.max(1, Math.ceil(filteredLeaderboard.length / itemsPerPage));
+  const paginatedLeaderboard = filteredLeaderboard.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   return (
     <div className="flex flex-col flex-1 min-h-screen overflow-x-hidden paddock-background">
@@ -1259,6 +1274,53 @@ export default function PaddockPulse() {
               </button>
             </div>
 
+            {/* Leaderboard Filtering Controls */}
+            <div className="mb-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
+               {/* Level Filters */}
+               <div className="bg-white/60 backdrop-blur-md rounded-xl border border-slate-200 p-1.5 flex shadow-sm">
+                  {[
+                     { id: 'all', label: 'All Compounds' },
+                     { id: 'basic', label: 'C1 Hard' },
+                     { id: 'intermediate', label: 'C3 Medium' },
+                     { id: 'advanced', label: 'C5 Soft' }
+                  ].map(lvl => (
+                     <button 
+                       key={lvl.id}
+                       onClick={() => setLbFilterLevel(lvl.id)}
+                       className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all duration-200 ${
+                         lbFilterLevel === lvl.id 
+                           ? 'bg-slate-900 text-white shadow-lg shadow-slate-900/20 scale-[1.02]' 
+                           : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                       }`}
+                     >
+                       {lvl.label}
+                     </button>
+                  ))}
+               </div>
+
+               {/* Stage Filters */}
+               <div className="bg-white/60 backdrop-blur-md rounded-xl border border-slate-200 p-1.5 flex shadow-sm">
+                  {[
+                     { id: 'all', label: 'All Stages' },
+                     { id: '1', label: 'Stage 1' },
+                     { id: '2', label: 'Stage 2' },
+                     { id: '3', label: 'Stage 3' }
+                  ].map(stg => (
+                     <button 
+                       key={stg.id}
+                       onClick={() => setLbFilterStage(stg.id)}
+                       className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all duration-200 ${
+                         lbFilterStage === stg.id 
+                           ? 'bg-f1-red text-white shadow-lg shadow-f1-red/20 scale-[1.02]' 
+                           : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'
+                       }`}
+                     >
+                       {stg.label}
+                     </button>
+                  ))}
+               </div>
+            </div>
+
             <div className="paddock-card rounded-2xl border border-slate-200 overflow-hidden flex-grow flex flex-col">
               <div className="overflow-x-auto flex-grow">
                 <table className="w-full text-left border-collapse min-w-[600px]">
@@ -1272,7 +1334,7 @@ export default function PaddockPulse() {
                     </tr>
                   </thead>
                   <tbody>
-                    {leaderboard.length === 0 ? (
+                    {filteredLeaderboard.length === 0 ? (
                       <tr>
                         <td colSpan={5} className="p-12 text-center text-slate-500 font-bold uppercase tracking-widest">
                           No telemetry data recorded yet.
@@ -1327,10 +1389,10 @@ export default function PaddockPulse() {
               </div>
 
               {/* Pagination Controls */}
-              {leaderboard.length > 0 && (
+              {filteredLeaderboard.length > 0 && (
                 <div className="bg-slate-50 px-6 py-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
                   <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
-                    Telemetry Feed: Showing {((currentPage - 1) * itemsPerPage) + 1} - {Math.min(currentPage * itemsPerPage, leaderboard.length)} of {leaderboard.length} Drivers
+                    Telemetry Feed: Showing {((currentPage - 1) * itemsPerPage) + 1} - {Math.min(currentPage * itemsPerPage, filteredLeaderboard.length)} of {filteredLeaderboard.length} Drivers
                   </div>
                   <div className="flex items-center gap-3">
                     <button 
