@@ -135,7 +135,7 @@ export default function RaceControl() {
     if(confirm("WARNING: This will wipe your live Supabase 'questions' table and re-seed it with the default campaign questions! Proceed?")) {
       setIsLoading(true);
       try {
-        await dbService.forceSyncDefaultsToFirestore();
+        await dbService.forceSyncDefaultsToSupabase();
         await loadAdminQuestions();
         setCrudSuccess("SUPABASE FULLY SYNCED WITH DEFAULT CAMPAIGN QUESTIONS!");
       } catch (err) {

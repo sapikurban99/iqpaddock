@@ -3,17 +3,18 @@ import { getFirestore, collection, getDocs } from "firebase/firestore";
 import { createClient } from '@supabase/supabase-js';
 
 // Configuration drawn from project config
+// NOTE: Run with: FIREBASE_API_KEY=xxx SUPABASE_URL=xxx SUPABASE_ANON_KEY=xxx node scripts/migrate-to-supabase.mjs
 const firebaseConfig = {
-  apiKey: "AIzaSyC5_ujs7Vqi_FQv2BpQiVpqpCHG_YkZW_0",
-  authDomain: "f1-quiz-8e9a1.firebaseapp.com",
-  projectId: "f1-quiz-8e9a1",
-  storageBucket: "f1-quiz-8e9a1.firebasestorage.app",
-  messagingSenderId: "766261564505",
-  appId: "1:766261564505:web:716b830cc15d45ed1a0d48",
+  apiKey: process.env.FIREBASE_API_KEY || "YOUR_FIREBASE_API_KEY",
+  authDomain: process.env.FIREBASE_AUTH_DOMAIN || "YOUR_PROJECT.firebaseapp.com",
+  projectId: process.env.FIREBASE_PROJECT_ID || "YOUR_PROJECT_ID",
+  storageBucket: process.env.FIREBASE_STORAGE_BUCKET || "YOUR_PROJECT.appspot.com",
+  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || "",
+  appId: process.env.FIREBASE_APP_ID || "",
 };
 
-const supabaseUrl = "https://acbuspkgizigwkhmlebp.supabase.co";
-const supabaseKey = "sb_publishable_iyYF8mfvwcSW-VGYiTuL4A_RpJZuHGa";
+const supabaseUrl = process.env.SUPABASE_URL || "https://YOUR_PROJECT.supabase.co";
+const supabaseKey = process.env.SUPABASE_ANON_KEY || "YOUR_SUPABASE_ANON_KEY";
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);

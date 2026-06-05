@@ -317,11 +317,17 @@ export const dbService = {
   },
 
   async resetLocalDb(): Promise<void> {
-    // NOP (No-Operation) in raw cloud mode, just there to not break consumer imports
-    return;
+    try {
+      const { data } = await supabase.from("questions").select("id");
+      if (data && data.length > 0) {
+        await supabase.from("questions").delete().in("id", data.map(r => r.id));
+      }
+    } catch (err) {
+      console.error("Failed to reset local DB:", err);
+    }
   },
 
-  async forceSyncDefaultsToFirestore(): Promise<boolean> {
+  async forceSyncDefaultsToSupabase(): Promise<boolean> {
     // Keeps logical naming for interface consistency but executes targeting Supabase
     try {
       // Simple truncate and fill strategy
